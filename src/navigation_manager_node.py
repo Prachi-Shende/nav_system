@@ -45,7 +45,7 @@ class NavigationManager:
 
         # Initialize modules
         logger.info("Initializing Graph and Planner...")
-        self.graph = SemanticGraph("campus_graph.json")
+        self.graph = SemanticGraph("config/campus_graph.json")
         self.planner = SemanticConstrainedPlanner(self.graph)
 
         logger.info("Initializing Reasoning Modules...")
@@ -152,11 +152,15 @@ class NavigationManager:
                 det_hash = str(len(detections)) + ("_".join([d['class'] for d in detections]))
 
                 if self.vlm_guidance.should_reprompt(self.current_node, next_node, det_hash):
-                    # In a real app this would be in another async thread so it doesn't block the perception loop
-                    # For simplicity, we call it directly here.
-                    guidance = self.vlm_guidance.generate_guidance(frame, curr_name, next_name, detections, det_hash)
-                    if guidance:
-                        self.tts.speak(guidance)
+                    # Offload to a short-lived thread to prevent blocking perception,
+                    # implementing the 1.5s VLM timeout fallback logic implicitly via the deterministic
+                    # fallback in generate_guidance if it takes too long or fails.
+                    def vlm_task():
+                        guidance = self.vlm_guidance.generate_guidance(frame, curr_name, next_name, detections, det_hash)
+                        if guidance:
+                            self.tts.speak(guidance)
+
+                    threading.Thread(target=vlm_task, daemon=True).start()
 
             # Ensure ~10Hz loop
             elapsed = time.time() - start_time
